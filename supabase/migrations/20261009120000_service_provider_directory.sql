@@ -108,6 +108,13 @@ begin
   if (target_visibility_scope = 'hotel') <> (target_organization_id is not null) then
     raise exception 'Choose a hotel for hotel-only visibility';
   end if;
+  if target_visibility_scope = 'hotel' and not exists (
+    select 1 from public.hotel_tenant_settings settings
+     where settings.organization_id = target_organization_id
+       and settings.is_active
+  ) then
+    raise exception 'Choose an active hotel';
+  end if;
   if char_length(coalesce(target_professional_summary, '')) > 1000 then
     raise exception 'Professional summary must be 1000 characters or fewer';
   end if;
@@ -167,9 +174,10 @@ set search_path = pg_catalog, public
 as $$
 begin
   if target_organization_id is null
-     or exists (
-       select 1 from public.books_personal_workspaces workspace
-        where workspace.organization_id = target_organization_id
+     or not exists (
+       select 1 from public.hotel_tenant_settings settings
+        where settings.organization_id = target_organization_id
+          and settings.is_active
      )
      or not public.hotel_user_manages_organization(target_organization_id) then
     raise exception 'Not authorized to browse providers for this hotel';
@@ -270,9 +278,10 @@ begin
     from public.tasks task
    where task.id = target_task_id;
   if not found
-     or exists (
-       select 1 from public.books_personal_workspaces workspace
-        where workspace.organization_id = task_row.organization_id
+     or not exists (
+       select 1 from public.hotel_tenant_settings settings
+        where settings.organization_id = task_row.organization_id
+          and settings.is_active
      )
      or not public.hotel_user_manages_organization(task_row.organization_id) then
     raise exception 'Not authorized to review this task';
@@ -332,9 +341,10 @@ begin
     from public.tasks task
    where task.id = target_task_id;
   if task_organization_id is null
-     or exists (
-       select 1 from public.books_personal_workspaces workspace
-        where workspace.organization_id = task_organization_id
+     or not exists (
+       select 1 from public.hotel_tenant_settings settings
+        where settings.organization_id = task_organization_id
+          and settings.is_active
      )
      or not public.hotel_user_manages_organization(task_organization_id) then
     raise exception 'Not authorized to view this task review';
@@ -367,9 +377,10 @@ as $$
        and directory_profile.is_listed
        and profile.role = 'service_provider'
        and profile.service_category = 'external'
-       and not exists (
-         select 1 from public.books_personal_workspaces workspace
-          where workspace.organization_id = target_organization_id
+       and exists (
+         select 1 from public.hotel_tenant_settings settings
+          where settings.organization_id = target_organization_id
+            and settings.is_active
        )
        and (
          directory_profile.visibility_scope = 'ecosystem'
@@ -390,9 +401,10 @@ begin
     raise exception 'Task hotel ownership cannot be changed';
   end if;
   if new.organization_id is null
-     or exists (
-       select 1 from public.books_personal_workspaces workspace
-        where workspace.organization_id = new.organization_id
+     or not exists (
+       select 1 from public.hotel_tenant_settings settings
+        where settings.organization_id = new.organization_id
+          and settings.is_active
      )
      or not public.hotel_user_manages_organization(new.organization_id, auth.uid()) then
     raise exception 'Task creator is not authorized for this hotel';
