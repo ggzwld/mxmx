@@ -166,7 +166,12 @@ security definer
 set search_path = pg_catalog, public
 as $$
 begin
-  if not public.hotel_user_manages_organization(target_organization_id) then
+  if target_organization_id is null
+     or exists (
+       select 1 from public.books_personal_workspaces workspace
+        where workspace.organization_id = target_organization_id
+     )
+     or not public.hotel_user_manages_organization(target_organization_id) then
     raise exception 'Not authorized to browse providers for this hotel';
   end if;
 
@@ -182,7 +187,7 @@ begin
          coalesce(completed.completed_task_count, 0),
          coalesce(reviews.average_rating, 0),
          coalesce(reviews.review_count, 0),
-         coalesce(reviews.testimonials, '[]'::jsonb)
+         coalesce(recent_testimonials.testimonials, '[]'::jsonb)
     from public.service_provider_directory_profiles directory_profile
     join public.user_profiles profile on profile.id = directory_profile.profile_id
     left join lateral (
@@ -200,21 +205,34 @@ begin
     ) completed on true
     left join lateral (
       select round(avg(review.rating)::numeric, 1) as average_rating,
-             count(*)::bigint as review_count,
-             jsonb_agg(
-               jsonb_build_object(
-                 'rating', review.rating,
-                 'testimonial', review.testimonial,
-                 'reviewer_name', coalesce(nullif(trim(concat_ws(' ', reviewer.first_name, reviewer.last_name)), ''), 'Hotel manager'),
-                 'created_at', review.created_at
-               )
-               order by review.created_at desc
-             ) filter (where review.testimonial <> '') as testimonials
+             count(*)::bigint as review_count
         from public.service_provider_reviews review
-        left join public.user_profiles reviewer on reviewer.user_id = review.reviewer_user_id
        where review.provider_profile_id = profile.id
          and review.organization_id = target_organization_id
     ) reviews on true
+    left join lateral (
+      select jsonb_agg(
+               jsonb_build_object(
+                 'rating', recent_review.rating,
+                 'testimonial', recent_review.testimonial,
+                 'reviewer_name', recent_review.reviewer_name,
+                 'created_at', recent_review.created_at
+               ) order by recent_review.created_at desc
+             ) as testimonials
+        from (
+          select review.rating,
+                 review.testimonial,
+                 coalesce(nullif(trim(concat_ws(' ', reviewer.first_name, reviewer.last_name)), ''), 'Hotel manager') as reviewer_name,
+                 review.created_at
+            from public.service_provider_reviews review
+            left join public.user_profiles reviewer on reviewer.user_id = review.reviewer_user_id
+           where review.provider_profile_id = profile.id
+             and review.organization_id = target_organization_id
+             and review.testimonial <> ''
+           order by review.created_at desc
+           limit 2
+        ) recent_review
+    ) recent_testimonials on true
    where directory_profile.is_listed
      and profile.role = 'service_provider'
      and profile.service_category = 'external'
@@ -251,7 +269,12 @@ begin
   select * into task_row
     from public.tasks task
    where task.id = target_task_id;
-  if not found or not public.hotel_user_manages_organization(task_row.organization_id) then
+  if not found
+     or exists (
+       select 1 from public.books_personal_workspaces workspace
+        where workspace.organization_id = task_row.organization_id
+     )
+     or not public.hotel_user_manages_organization(task_row.organization_id) then
     raise exception 'Not authorized to review this task';
   end if;
   if task_row.status <> 'completed' or task_row.assigned_to is null or task_row.assigned_category <> 'external' then
@@ -281,7 +304,9 @@ begin
     btrim(coalesce(target_testimonial, '')), now()
   )
   on conflict (task_id) do update
-     set rating = excluded.rating,
+     set provider_profile_id = excluded.provider_profile_id,
+         organization_id = excluded.organization_id,
+         rating = excluded.rating,
          testimonial = excluded.testimonial,
          reviewer_user_id = excluded.reviewer_user_id,
          updated_at = now();
@@ -306,7 +331,12 @@ begin
   select task.organization_id into task_organization_id
     from public.tasks task
    where task.id = target_task_id;
-  if task_organization_id is null or not public.hotel_user_manages_organization(task_organization_id) then
+  if task_organization_id is null
+     or exists (
+       select 1 from public.books_personal_workspaces workspace
+        where workspace.organization_id = task_organization_id
+     )
+     or not public.hotel_user_manages_organization(task_organization_id) then
     raise exception 'Not authorized to view this task review';
   end if;
 
@@ -337,6 +367,10 @@ as $$
        and directory_profile.is_listed
        and profile.role = 'service_provider'
        and profile.service_category = 'external'
+       and not exists (
+         select 1 from public.books_personal_workspaces workspace
+          where workspace.organization_id = target_organization_id
+       )
        and (
          directory_profile.visibility_scope = 'ecosystem'
          or directory_profile.organization_id = target_organization_id
@@ -355,7 +389,12 @@ begin
   if tg_op = 'UPDATE' and old.organization_id is not null and new.organization_id is distinct from old.organization_id then
     raise exception 'Task hotel ownership cannot be changed';
   end if;
-  if new.organization_id is null or not public.hotel_user_manages_organization(new.organization_id, auth.uid()) then
+  if new.organization_id is null
+     or exists (
+       select 1 from public.books_personal_workspaces workspace
+        where workspace.organization_id = new.organization_id
+     )
+     or not public.hotel_user_manages_organization(new.organization_id, auth.uid()) then
     raise exception 'Task creator is not authorized for this hotel';
   end if;
   if new.complaint_id is not null and not exists (
@@ -368,11 +407,23 @@ begin
      and not exists (
        select 1
          from public.user_profiles profile
-         join public.books_memberships membership on membership.user_id = profile.user_id
         where profile.id = new.assigned_to
-          and membership.organization_id = new.organization_id
-     )
-     and not public.service_provider_is_listed_for_hotel(new.assigned_to, new.organization_id) then
+          and (
+            (
+              profile.role = 'service_provider'
+              and profile.service_category = 'external'
+              and public.service_provider_is_listed_for_hotel(profile.id, new.organization_id)
+            )
+            or (
+              (profile.role <> 'service_provider' or profile.service_category is distinct from 'external')
+              and exists (
+                select 1 from public.books_memberships membership
+                 where membership.user_id = profile.user_id
+                   and membership.organization_id = new.organization_id
+              )
+            )
+          )
+     ) then
     raise exception 'Task assignee must belong to this hotel or be listed for it';
   end if;
   return new;
