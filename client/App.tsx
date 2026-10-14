@@ -35,6 +35,7 @@ import BooksPage from "./pages/BooksPage";
 import ReviewsPage from "./pages/ReviewsPage";
 import ConciergePage from "./pages/ConciergePage";
 import OffersPage from "./pages/OffersPage";
+import ServiceProvidersPage from "./pages/ServiceProvidersPage";
 import BillingPlansPage from "./pages/BillingPlansPage";
 import PaymentMethodPage from "./pages/PaymentMethodPage";
 import PayoutMethodPage from "./pages/PayoutMethodPage";
@@ -148,6 +149,7 @@ function App() {
               <Route path="/travel" element={<TravelDeskPage />} />
               <Route path="/events/operations/:eventId" element={<SpecialEventOperationsPage />} />
               <Route path="/events" element={<EventsPage />} />
+              <Route path="/service-providers" element={<ServiceProvidersPage />} />
               <Route path="/blog" element={<BlogPage />} />
               <Route path="/shop" element={<ShopPage />} />
               <Route path="/register" element={<RegisterPage />} />

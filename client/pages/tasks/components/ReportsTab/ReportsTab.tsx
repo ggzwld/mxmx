@@ -36,7 +36,7 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
   const relevantTasks = useMemo(() =>
     userRole === "service_provider"
       ? tasks.filter((t) => t.assigned_to === currentUserProfile?.id && t.status === "in_progress")
-      : tasks.filter((t) => t.status === "in_progress"),
+      : tasks.filter((t) => t.status === "in_progress" || (t.status === "completed" && t.assigned_category === "external")),
     [tasks, userRole, currentUserProfile?.id]
   );
 

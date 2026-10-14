@@ -1,5 +1,6 @@
 import React from "react";
 import { PlusCircle, Send } from "lucide-react";
+import { Link } from "react-router-dom";
 import {
   Card,
   CardContent,
@@ -196,6 +197,7 @@ const TaskCreationForm: React.FC<TaskCreationFormProps> = ({
                 <Select
                   value={formData.assignee}
                   onValueChange={(value) => onFormChange("assignee", value)}
+                  disabled={formData.assignmentType === "external" && !formData.assignee}
                 >
                   <SelectTrigger>
                     <SelectValue
@@ -212,18 +214,17 @@ const TaskCreationForm: React.FC<TaskCreationFormProps> = ({
                       internalStaff.map((staff) => (
                         <SelectItem
                           key={staff.id}
-                          value={`${staff.first_name} ${staff.last_name} - ${staff.service_type}`}
+                          value={staff.id}
                         >
                           {staff.first_name} {staff.last_name} (
                           {staff.service_type})
                         </SelectItem>
                       ))}
                     {formData.assignmentType === "external" &&
-                      externalVendors.length > 0 &&
-                      externalVendors.map((vendor) => (
+                      externalVendors.filter((vendor) => vendor.id === formData.assignee).map((vendor) => (
                         <SelectItem
                           key={vendor.id}
-                          value={`${vendor.first_name} ${vendor.last_name} - ${vendor.service_type}`}
+                          value={vendor.id}
                         >
                           {vendor.first_name} {vendor.last_name} (
                           {vendor.service_type})
@@ -237,12 +238,16 @@ const TaskCreationForm: React.FC<TaskCreationFormProps> = ({
                       No internal staff available. Create staff profiles first.
                     </p>
                   )}
-                {formData.assignmentType === "external" &&
-                  externalVendors.length === 0 && (
-                    <p className="text-sm text-orange-600">
-                      No external vendors available. Create vendor profiles first.
+                {formData.assignmentType === "external" && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm text-muted-foreground">
+                      {externalVendors.length === 0 ? "No listed providers are available for this hotel." : formData.assignee ? "Provider selected from the directory." : "Browse the directory to choose a provider."}
                     </p>
-                  )}
+                    <Button variant="link" size="sm" asChild className="h-auto p-0">
+                      <Link to="/service-providers">Browse provider directory</Link>
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
 

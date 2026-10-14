@@ -344,13 +344,23 @@ const TasksPage: React.FC = () => {
         setInternalStaff(internalData || []);
 
         // Load external vendors
-        const { data: externalData, error: externalError } = await supabase
-          .from("user_profiles")
-          .select("id, email, first_name, last_name, service_type, role")
-          .eq("service_category", "external");
+        const { data: externalData, error: externalError } = await supabase.rpc("get_service_provider_directory", {
+          target_organization_id: tenant.organizationId,
+        });
 
-        if (externalError) throw externalError;
-        setExternalVendors(externalData || []);
+        if (externalError) {
+          console.error("Unable to load opted-in providers:", externalError);
+          setExternalVendors([]);
+        } else {
+          setExternalVendors((externalData || []).map((provider: any) => ({
+            id: provider.profile_id,
+            email: "",
+            first_name: provider.full_name || "Service provider",
+            last_name: "",
+            service_type: provider.service_type || "External provider",
+            display_name: provider.full_name || "Service provider",
+          })));
+        }
 
         // Load complaints
         const { data: complaintsData, error: complaintsError } = await supabase
@@ -446,8 +456,19 @@ const TasksPage: React.FC = () => {
     else if (tab === "live-chat") navigate("/tasks/chat");
   };
 
+  useEffect(() => {
+    const providerId = new URLSearchParams(location.search).get("providerId");
+    if (providerId && externalVendors.some((provider) => provider.id === providerId)) {
+      setFormData((prev) => ({ ...prev, assignmentType: "external", assignee: providerId }));
+    }
+  }, [location.search, externalVendors]);
+
   const handleFormChange = (field: string, value: string | string[]) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [field]: value,
+      ...(field === "assignmentType" ? { assignee: "" } : {}),
+    }));
   };
 
   const handleSelectComplaint = async (complaint: Complaint) => {
@@ -538,10 +559,11 @@ const TasksPage: React.FC = () => {
     setIsSubmitting(true);
     try {
       const assignees = formData.assignmentType === "internal" ? internalStaff : externalVendors;
-      const selectedAssignee = assignees.find(
-        (a) => `${a.first_name} ${a.last_name} - ${a.service_type}` === formData.assignee ||
-               `${a.email}` === formData.assignee
-      );
+      const selectedAssignee = assignees.find((assignee) => assignee.id === formData.assignee);
+      if (!selectedAssignee) {
+        throw new Error("Choose a valid assignee before creating the task.");
+      }
+      const assigneeName = selectedAssignee.display_name || `${selectedAssignee.first_name} ${selectedAssignee.last_name}`.trim();
 
       const taskData = {
         complaint_id: selectedComplaint?.id || null,
@@ -551,7 +573,7 @@ const TasksPage: React.FC = () => {
         category: (formData.category as "operations" | "service" | "training" | "maintenance") || null,
         status: "todo",
         assigned_to: selectedAssignee?.id || null,
-        assignee_name: formData.assignee,
+        assignee_name: assigneeName,
         assigned_category: formData.assignmentType as "internal" | "external",
         due_date: formData.dueDate || null,
         estimated_time: formData.estimatedTime || null,
@@ -634,7 +656,7 @@ const TasksPage: React.FC = () => {
 
       toast({
         title: "Success",
-        description: `Task created and assigned to ${formData.assignee}!`,
+        description: `Task created and assigned to ${assigneeName}!`,
       });
 
       const { data: tasksData } = await supabase
