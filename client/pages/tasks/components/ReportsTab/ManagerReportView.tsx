@@ -35,22 +35,28 @@ const ManagerReportView: React.FC<ManagerReportViewProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewTestimonial, setReviewTestimonial] = useState("");
+  const [isReviewLoading, setIsReviewLoading] = useState(false);
   const [isReviewSaving, setIsReviewSaving] = useState(false);
+  const hasApprovedReport = taskReport?.task_id === task.id && taskReport.status === "approved";
 
   useEffect(() => {
-    if (task.assigned_category !== "external" || taskReport?.status !== "approved") return;
+    if (task.assigned_category !== "external" || !hasApprovedReport) return;
     let active = true;
+    setReviewRating(0);
+    setReviewTestimonial("");
+    setIsReviewLoading(true);
     supabase.rpc("get_service_provider_task_review", { target_task_id: task.id }).then(({ data, error }) => {
       if (!active) return;
       if (error) {
         toast({ title: "Could not load provider review", description: error.message, variant: "destructive" });
-        return;
+      } else {
+        setReviewRating(data?.[0]?.rating || 0);
+        setReviewTestimonial(data?.[0]?.testimonial || "");
       }
-      setReviewRating(data?.[0]?.rating || 0);
-      setReviewTestimonial(data?.[0]?.testimonial || "");
+      setIsReviewLoading(false);
     });
     return () => { active = false; };
-  }, [task.id, task.assigned_category, taskReport?.status]);
+  }, [task.id, task.assigned_category, hasApprovedReport]);
 
   const handleSaveProviderReview = async () => {
     if (reviewRating < 1 || reviewRating > 5) {
@@ -344,7 +350,7 @@ const ManagerReportView: React.FC<ManagerReportViewProps> = ({
         </div>
       )}
 
-      {taskReport.status === "approved" && task.assigned_category === "external" && (
+      {hasApprovedReport && task.assigned_category === "external" && (
         <div className="rounded-lg border bg-white p-6 shadow-md">
           <h3 className="text-lg font-semibold text-sheraton-navy">Rate this provider</h3>
           <p className="mb-4 mt-1 text-sm text-muted-foreground">Your rating and optional testimonial are visible to managers in this hotel's provider directory.</p>
@@ -374,10 +380,10 @@ const ManagerReportView: React.FC<ManagerReportViewProps> = ({
           <button
             type="button"
             onClick={() => void handleSaveProviderReview()}
-            disabled={isReviewSaving}
+            disabled={isReviewLoading || isReviewSaving}
             className="mt-4 rounded-md bg-sheraton-gold px-4 py-2 font-medium text-sheraton-navy disabled:opacity-50"
           >
-            {isReviewSaving ? "Saving..." : "Save manager review"}
+            {isReviewLoading ? "Loading review..." : isReviewSaving ? "Saving..." : "Save manager review"}
           </button>
         </div>
       )}

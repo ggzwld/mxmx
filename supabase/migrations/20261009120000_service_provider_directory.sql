@@ -108,7 +108,7 @@ begin
   if (target_visibility_scope = 'hotel') <> (target_organization_id is not null) then
     raise exception 'Choose a hotel for hotel-only visibility';
   end if;
-  if target_visibility_scope = 'hotel' and not exists (
+  if target_is_listed and target_visibility_scope = 'hotel' and not exists (
     select 1 from public.hotel_tenant_settings settings
      where settings.organization_id = target_organization_id
        and settings.is_active
@@ -422,12 +422,15 @@ begin
         where profile.id = new.assigned_to
           and (
             (
-              profile.role = 'service_provider'
+              new.assigned_category = 'external'
+              and profile.role = 'service_provider'
               and profile.service_category = 'external'
               and public.service_provider_is_listed_for_hotel(profile.id, new.organization_id)
             )
             or (
-              (profile.role <> 'service_provider' or profile.service_category is distinct from 'external')
+              new.assigned_category = 'internal'
+              and profile.role in ('manager', 'service_provider')
+              and profile.service_category = 'internal'
               and exists (
                 select 1 from public.books_memberships membership
                  where membership.user_id = profile.user_id
@@ -436,7 +439,7 @@ begin
             )
           )
      ) then
-    raise exception 'Task assignee must belong to this hotel or be listed for it';
+    raise exception 'Task assignee must match the assignment type and belong to this hotel';
   end if;
   return new;
 end;
@@ -444,7 +447,7 @@ $$;
 revoke all on function public.attach_task_hotel_organization() from public, anon, authenticated;
 drop trigger if exists task_hotel_organization on public.tasks;
 create trigger task_hotel_organization
-before insert or update of organization_id, created_by, complaint_id, assigned_to
+before insert or update of organization_id, created_by, complaint_id, assigned_to, assigned_category
 on public.tasks
 for each row execute function public.attach_task_hotel_organization();
 
