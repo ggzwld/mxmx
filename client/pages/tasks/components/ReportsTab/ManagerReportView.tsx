@@ -1,4 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { Star } from "lucide-react";
+import { Textarea } from "../../../../components/ui/textarea";
 import { supabase, Task as TaskType, TaskReport, TaskChecklist, TaskChecklistItem, TaskReportChecklistItem, TaskEvidenceSubmission, TaskIssue, TaskEvidenceRequirement } from "../../../../lib/supabase";
 import { toast } from "../../../../hooks/use-toast";
 import EvidenceGallery from "./EvidenceGallery";
@@ -31,6 +33,49 @@ const ManagerReportView: React.FC<ManagerReportViewProps> = ({
   onIssueResolved,
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewTestimonial, setReviewTestimonial] = useState("");
+  const [isReviewLoading, setIsReviewLoading] = useState(false);
+  const [isReviewSaving, setIsReviewSaving] = useState(false);
+  const hasApprovedReport = taskReport?.task_id === task.id && taskReport.status === "approved";
+
+  useEffect(() => {
+    if (task.assigned_category !== "external" || !hasApprovedReport) return;
+    let active = true;
+    setReviewRating(0);
+    setReviewTestimonial("");
+    setIsReviewLoading(true);
+    supabase.rpc("get_service_provider_task_review", { target_task_id: task.id }).then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        toast({ title: "Could not load provider review", description: error.message, variant: "destructive" });
+      } else {
+        setReviewRating(data?.[0]?.rating || 0);
+        setReviewTestimonial(data?.[0]?.testimonial || "");
+      }
+      setIsReviewLoading(false);
+    });
+    return () => { active = false; };
+  }, [task.id, task.assigned_category, hasApprovedReport]);
+
+  const handleSaveProviderReview = async () => {
+    if (reviewRating < 1 || reviewRating > 5) {
+      toast({ title: "Choose a rating", description: "Select a score from 1 to 5.", variant: "destructive" });
+      return;
+    }
+    setIsReviewSaving(true);
+    const { error } = await supabase.rpc("submit_service_provider_review", {
+      target_task_id: task.id,
+      target_rating: reviewRating,
+      target_testimonial: reviewTestimonial.trim(),
+    });
+    setIsReviewSaving(false);
+    if (error) {
+      toast({ title: "Review not saved", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Provider review saved", description: "This rating is visible to managers in this hotel's directory." });
+  };
 
   const openIssues = issues.filter((i) => i.status === "open");
   const completionPercentage = taskReport?.percentage_complete || 0;
@@ -302,6 +347,44 @@ const ManagerReportView: React.FC<ManagerReportViewProps> = ({
           <p className="text-center font-semibold text-green-800">
             ✓ Task Approved and Completed
           </p>
+        </div>
+      )}
+
+      {hasApprovedReport && task.assigned_category === "external" && (
+        <div className="rounded-lg border bg-white p-6 shadow-md">
+          <h3 className="text-lg font-semibold text-sheraton-navy">Rate this provider</h3>
+          <p className="mb-4 mt-1 text-sm text-muted-foreground">Your rating and optional testimonial are visible to managers in this hotel's provider directory.</p>
+          <div className="mb-4 flex gap-1" role="radiogroup" aria-label="Provider rating">
+            {[1, 2, 3, 4, 5].map((rating) => (
+              <button
+                key={rating}
+                type="button"
+                role="radio"
+                aria-checked={reviewRating === rating}
+                aria-label={`${rating} out of 5 stars`}
+                onClick={() => setReviewRating(rating)}
+                className="rounded p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Star className={`h-6 w-6 ${reviewRating >= rating ? "fill-sheraton-gold text-sheraton-gold" : "text-muted-foreground"}`} />
+              </button>
+            ))}
+          </div>
+          <Textarea
+            value={reviewTestimonial}
+            onChange={(event) => setReviewTestimonial(event.target.value)}
+            maxLength={1000}
+            rows={3}
+            placeholder="Optional feedback about the completed work"
+            aria-label="Provider testimonial"
+          />
+          <button
+            type="button"
+            onClick={() => void handleSaveProviderReview()}
+            disabled={isReviewLoading || isReviewSaving}
+            className="mt-4 rounded-md bg-sheraton-gold px-4 py-2 font-medium text-sheraton-navy disabled:opacity-50"
+          >
+            {isReviewLoading ? "Loading review..." : isReviewSaving ? "Saving..." : "Save manager review"}
+          </button>
         </div>
       )}
     </div>

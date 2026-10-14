@@ -4,6 +4,7 @@ import { Button } from "../components/ui/button";
 import { BillingTab } from "./components/BillingTab";
 import { supabase } from "../lib/supabase";
 import { useToast } from "../hooks/use-toast";
+import { useHotelTenant } from "../lib/hotelTenant";
 import {
   Card,
   CardContent,
@@ -94,11 +95,22 @@ type RewardsSummary = {
 const ServicesProfilePage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { tenant } = useHotelTenant();
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isEditing, setIsEditing] = useState(false);
   const [showPerformanceDetails, setShowPerformanceDetails] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [userRole, setUserRole] = useState<'guest' | 'manager' | 'service_provider' | null>(null);
+  const [isExternalServiceProvider, setIsExternalServiceProvider] = useState(false);
+  const [isDirectorySaving, setIsDirectorySaving] = useState(false);
+  const [directoryProfile, setDirectoryProfile] = useState({
+    isListed: false,
+    visibilityScope: "ecosystem" as "ecosystem" | "hotel",
+    organizationId: null as string | null,
+    professionalSummary: "",
+    specialties: "",
+    yearsExperience: "",
+  });
   const [rewardsPrograms, setRewardsPrograms] = useState<RewardsSummary[]>([]);
   const [selectedRewardsOrganization, setSelectedRewardsOrganization] = useState("");
   const [rewardsLoadError, setRewardsLoadError] = useState(false);
@@ -216,6 +228,23 @@ const ServicesProfilePage = () => {
         const resolvedRole = resolvedProfile?.role ||
           (metadata.role === "manager" ? "manager" : "service_provider");
         setUserRole(resolvedRole);
+        setIsExternalServiceProvider(resolvedRole === "service_provider" && resolvedProfile?.service_category === "external");
+        if (resolvedRole === "service_provider" && resolvedProfile?.service_category === "external") {
+          const { data: directoryData, error: directoryError } = await supabase.rpc("get_my_service_provider_directory_profile");
+          if (directoryError) {
+            console.error("Unable to load provider directory profile:", directoryError);
+          } else if (directoryData?.[0]) {
+            const directory = directoryData[0];
+            setDirectoryProfile({
+              isListed: directory.is_listed,
+              visibilityScope: directory.visibility_scope,
+              organizationId: directory.organization_id,
+              professionalSummary: directory.professional_summary || "",
+              specialties: (directory.specialties || []).join(", "),
+              yearsExperience: directory.years_experience == null ? "" : String(directory.years_experience),
+            });
+          }
+        }
         setUserData((prev) => ({
           ...prev,
           organizationName: resolvedProfile?.organization_name || metadata.organization_name || "",
@@ -250,6 +279,29 @@ const ServicesProfilePage = () => {
 
     fetchUserProfile();
   }, [navigate]);
+
+  const saveDirectoryProfile = async () => {
+    setIsDirectorySaving(true);
+    const specialties = directoryProfile.specialties
+      .split(/[\n,]/)
+      .map((specialty) => specialty.trim())
+      .filter(Boolean);
+    const { error } = await supabase.rpc("save_my_service_provider_directory_profile", {
+      target_is_listed: directoryProfile.isListed,
+      target_visibility_scope: directoryProfile.visibilityScope,
+      target_organization_id: directoryProfile.visibilityScope === "hotel" ? tenant?.organizationId || directoryProfile.organizationId : null,
+      target_professional_summary: directoryProfile.professionalSummary.trim(),
+      target_specialties: specialties,
+      target_years_experience: directoryProfile.yearsExperience === "" ? null : Number(directoryProfile.yearsExperience),
+    });
+    setIsDirectorySaving(false);
+
+    if (error) {
+      toast({ title: "Directory profile not saved", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Directory profile saved", description: directoryProfile.isListed ? "Your profile is listed for the selected audience." : "Your profile is no longer listed." });
+  };
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -1301,6 +1353,81 @@ const ServicesProfilePage = () => {
                 </div>
               </CardContent>
             </Card>
+            {isExternalServiceProvider && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Briefcase className="h-5 w-5 text-sheraton-gold" />
+                    Service Provider Directory
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">Choose whether hotel managers can discover your services. Your private reports and work media are not shared in the directory.</p>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="flex items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-1">
+                      <Label htmlFor="provider-directory-listed">List my provider profile</Label>
+                      <p className="text-sm text-muted-foreground">You can turn this off at any time.</p>
+                    </div>
+                    <Switch
+                      id="provider-directory-listed"
+                      checked={directoryProfile.isListed}
+                      onCheckedChange={(isListed) => setDirectoryProfile((profile) => ({ ...profile, isListed }))}
+                    />
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="provider-visibility">Visible to</Label>
+                      <Select
+                        value={directoryProfile.visibilityScope}
+                        onValueChange={(visibilityScope: "ecosystem" | "hotel") => setDirectoryProfile((profile) => ({ ...profile, visibilityScope }))}
+                      >
+                        <SelectTrigger id="provider-visibility"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ecosystem">Managers across all hotels</SelectItem>
+                          <SelectItem value="hotel" disabled={!tenant?.organizationId}>Managers at {tenant?.name || "this hotel"}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">Only authorized hotel managers can browse listed profiles.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="provider-years-experience">Years of experience</Label>
+                      <Input
+                        id="provider-years-experience"
+                        type="number"
+                        min="0"
+                        max="80"
+                        value={directoryProfile.yearsExperience}
+                        onChange={(event) => setDirectoryProfile((profile) => ({ ...profile, yearsExperience: event.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="provider-specialties">Specialties</Label>
+                      <Input
+                        id="provider-specialties"
+                        value={directoryProfile.specialties}
+                        onChange={(event) => setDirectoryProfile((profile) => ({ ...profile, specialties: event.target.value }))}
+                        placeholder="HVAC, plumbing, electrical"
+                      />
+                      <p className="text-xs text-muted-foreground">Separate specialties with commas; up to 12.</p>
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="provider-summary">Professional summary</Label>
+                      <Textarea
+                        id="provider-summary"
+                        value={directoryProfile.professionalSummary}
+                        onChange={(event) => setDirectoryProfile((profile) => ({ ...profile, professionalSummary: event.target.value }))}
+                        maxLength={1000}
+                        rows={4}
+                        placeholder="Describe your experience and the services you provide."
+                      />
+                    </div>
+                  </div>
+                  <Button onClick={() => void saveDirectoryProfile()} disabled={isDirectorySaving}>
+                    {isDirectorySaving ? "Saving..." : "Save directory profile"}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Activities Tab */}
